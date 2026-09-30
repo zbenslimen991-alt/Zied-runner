@@ -1,0 +1,49 @@
+name: Position Monitor (5 min)
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: okx-quant-portfolio-state
+  cancel-in-progress: false
+
+jobs:
+  monitor-positions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout private app repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.APP_REPO }}
+          token: ${{ secrets.APP_REPO_TOKEN }}
+          path: app
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies
+        working-directory: app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Monitor open positions
+        working-directory: app
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python okx_quant/position_monitor.py > "$RUNNER_TEMP/run.log" 2>&1 \
+            || { echo "::error::Monitor failed (details sent to Telegram)"; exit 1; }
