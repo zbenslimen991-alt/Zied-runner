@@ -2,12 +2,17 @@ name: Scanner (Hourly)
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # تشغيل مرة كل ساعة، بعيدًا عن بداية الساعة لتقليل تأخير GitHub
+    - cron: '7 * * * *'
+
+  # تشغيل يدوي من Actions
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
+# يمنع تشغيل دورتين من تعديل نفس حالة المحفظة في نفس الوقت.
+# لا يلغي الدورة السابقة.
 concurrency:
   group: okx-quant-portfolio-state
   cancel-in-progress: false
@@ -15,7 +20,9 @@ concurrency:
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+
+    # 40 دقيقة بدل 30 لأن بعض دوراتك الحالية تقترب من 30 دقيقة.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout private app repository
@@ -43,13 +50,38 @@ jobs:
         working-directory: app
         run: |
           python -m pytest -q > "$RUNNER_TEMP/tests.log" 2>&1 \
-            || { echo "::error::Tests failed"; exit 1; }
+            || {
+              echo "::error::Tests failed"
+              cat "$RUNNER_TEMP/tests.log"
+              exit 1
+            }
 
-      - name: Run scanner
+      - name: Run scanner with retry
         working-directory: app
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          python okx_quant/okx_quant_scanner.py > "$RUNNER_TEMP/run.log" 2>&1 \
-            || { echo "::error::Scanner failed (details sent to Telegram)"; exit 1; }
+          for attempt in 1 2 3; do
+            echo "=========================================="
+            echo "Scanner attempt $attempt/3"
+            echo "=========================================="
+
+            if python okx_quant/okx_quant_scanner.py > "$RUNNER_TEMP/run.log" 2>&1; then
+              echo "Scanner completed successfully."
+              exit 0
+            fi
+
+            echo "::warning::Scanner attempt $attempt failed."
+
+            cat "$RUNNER_TEMP/run.log"
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "Waiting 30 seconds before retry..."
+              sleep 30
+            fi
+          done
+
+          echo "::error::Scanner failed after 3 attempts."
+          cat "$RUNNER_TEMP/run.log"
+          exit 1
