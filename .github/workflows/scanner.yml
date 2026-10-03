@@ -1,53 +1,21 @@
 name: Scanner (Hourly)
 
-# التشغيل الساعي ذاتي الاستمرار: بعد انتهاء كل دورة تنتظر مهمة "chain" حتى
-# الدقيقة 07 من الساعة التالية ثم تطلق الدورة التالية بنفسها (workflow_dispatch).
-# جدولة schedule بقيت كاحتياط فقط، وتُتجاهل إن كانت هناك دورة بدأت قبل أقل من 45 دقيقة.
-# لإيقاف السلسلة: ألغِ (Cancel) الدورة الجارية أو مهمة chain من تبويب Actions.
-
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '0 * * * *'
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  actions: write
+
+concurrency:
+  group: okx-quant-portfolio-state
+  cancel-in-progress: false
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      go: ${{ steps.check.outputs.go }}
-    steps:
-      - name: Skip backup schedule if a run started recently
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          go=true
-          if [ "$EVENT" = "schedule" ]; then
-            since=$(date -u -d '45 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-            n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
-                  -f created=">=$since" -f per_page=50 \
-                  --jq "[.workflow_runs[] | select(.id != $RUN_ID)] | length" || echo 0)
-            echo "recent runs: $n"
-            if [ "${n:-0}" -gt 0 ]; then go=false; fi
-          fi
-          echo "go=$go" >> "$GITHUB_OUTPUT"
-
   run-scanner:
-    needs: gate
-    if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    concurrency:
-      group: okx-quant-portfolio-state
-      cancel-in-progress: false
+    timeout-minutes: 30
 
     steps:
       - name: Checkout private app repository
@@ -85,35 +53,3 @@ jobs:
         run: |
           python okx_quant/okx_quant_scanner.py > "$RUNNER_TEMP/run.log" 2>&1 \
             || { echo "::error::Scanner failed (details sent to Telegram)"; exit 1; }
-
-  chain:
-    needs: [gate, run-scanner]
-    # تستمر السلسلة حتى لو فشلت الدورة، وتتوقف فقط عند الإلغاء اليدوي.
-    if: ${{ always() && needs.gate.outputs.go == 'true' && needs.run-scanner.result != 'cancelled' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 65
-    steps:
-      - name: Wait until next HH:07 (UTC) then dispatch next run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          now=$(date -u +%s)
-          target=$(date -u -d "$(date -u +%Y-%m-%dT%H):07:00" +%s)
-          if [ "$target" -le $((now + 120)) ]; then target=$((target + 3600)); fi
-          wait=$((target - now))
-          echo "sleeping ${wait}s until $(date -u -d @$target +%H:%M) UTC"
-          sleep "$wait"
-
-          # تشتيت صغير ثم منع التكرار: لا نطلق دورة إن وُجدت دورة أخرى بدأت قبل أقل من 10 دقائق.
-          sleep $((RANDOM % 25))
-          since=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
-                -f created=">=$since" -f per_page=50 \
-                --jq "[.workflow_runs[] | select(.id != $RUN_ID)] | length" || echo 0)
-          if [ "${n:-0}" -gt 0 ]; then
-            echo "another run already started; not dispatching"
-            exit 0
-          fi
-          gh workflow run scanner.yml --repo "$REPO" --ref "${{ github.ref_name }}"
