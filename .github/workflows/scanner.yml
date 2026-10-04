@@ -1,59 +1,55 @@
 name: Scanner (Hourly)
 
+# التشغيل الساعي ذاتي الاستمرار: بعد انتهاء كل دورة تنتظر مهمة "chain" حتى
+# الدقيقة 07 من الساعة التالية ثم تطلق الدورة التالية بنفسها (workflow_dispatch).
+# جدولة schedule بقيت كاحتياط فقط، وتُتجاهل إن كانت هناك دورة بدأت قبل أقل من 45 دقيقة.
+# لإيقاف السلسلة: ألغِ (Cancel) الدورة الجارية أو مهمة chain من تبويب Actions.
+
 on:
-  # التشغيل التلقائي كل ساعة
-  # 13 دقيقة بعد بداية الساعة لتقليل ضغط GitHub
   schedule:
-    - cron: '13 * * * *'
-
-  # التشغيل اليدوي من Actions
+    - cron: '17 * * * *'
   workflow_dispatch: {}
-
-  # اختبار أن الـ workflow يعمل عند وصول Commit إلى main
-  # هذا مؤقت للتشخيص، ويمكن حذفه لاحقًا.
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
-
-# يمنع تشغيل دورتين من تعديل نفس حالة المحفظة في نفس الوقت.
-# لا يلغي الدورة السابقة.
-concurrency:
-  group: okx-quant-portfolio-state
-  cancel-in-progress: false
+  actions: write
 
 jobs:
-  run-scanner:
+  gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - name: Skip backup schedule if a run started recently
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          go=true
+          if [ "$EVENT" = "schedule" ]; then
+            since=$(date -u -d '45 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+            n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
+                  -f created=">=$since" -f per_page=50 \
+                  --jq "[.workflow_runs[] | select(.id != $RUN_ID)] | length" || echo 0)
+            echo "recent runs: $n"
+            if [ "${n:-0}" -gt 0 ]; then go=false; fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
 
-    # 40 دقيقة لأن بعض الدورات قد تقترب من 30 دقيقة.
-    timeout-minutes: 40
+  run-scanner:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: okx-quant-portfolio-state
+      cancel-in-progress: false
 
     steps:
-      - name: Show trigger information
-        run: |
-          echo "=========================================="
-          echo "Workflow trigger information"
-          echo "=========================================="
-          echo "Event: ${{ github.event_name }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Workflow: ${{ github.workflow }}"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "=========================================="
-
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "SCHEDULED RUN DETECTED"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            echo "PUSH RUN DETECTED"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "MANUAL RUN DETECTED"
-          else
-            echo "UNKNOWN TRIGGER DETECTED"
-          fi
-
       - name: Checkout private app repository
         uses: actions/checkout@v4
         with:
@@ -79,38 +75,45 @@ jobs:
         working-directory: app
         run: |
           python -m pytest -q > "$RUNNER_TEMP/tests.log" 2>&1 \
-            || {
-              echo "::error::Tests failed"
-              cat "$RUNNER_TEMP/tests.log"
-              exit 1
-            }
+            || { echo "::error::Tests failed"; exit 1; }
 
-      - name: Run scanner with retry
+      - name: Run scanner
         working-directory: app
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          for attempt in 1 2 3; do
-            echo "=========================================="
-            echo "Scanner attempt $attempt/3"
-            echo "=========================================="
+          python okx_quant/okx_quant_scanner.py > "$RUNNER_TEMP/run.log" 2>&1 \
+            || { echo "::error::Scanner failed (details sent to Telegram)"; exit 1; }
 
-            if python okx_quant/okx_quant_scanner.py > "$RUNNER_TEMP/run.log" 2>&1; then
-              echo "Scanner completed successfully."
-              exit 0
-            fi
+  chain:
+    needs: [gate, run-scanner]
+    # تستمر السلسلة حتى لو فشلت الدورة، وتتوقف فقط عند الإلغاء اليدوي.
+    if: ${{ always() && needs.gate.outputs.go == 'true' && needs.run-scanner.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Wait until next HH:07 (UTC) then dispatch next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          now=$(date -u +%s)
+          target=$(date -u -d "$(date -u +%Y-%m-%dT%H):07:00" +%s)
+          if [ "$target" -le $((now + 120)) ]; then target=$((target + 3600)); fi
+          wait=$((target - now))
+          echo "sleeping ${wait}s until $(date -u -d @$target +%H:%M) UTC"
+          sleep "$wait"
 
-            echo "::warning::Scanner attempt $attempt failed."
-
-            cat "$RUNNER_TEMP/run.log"
-
-            if [ "$attempt" -lt 3 ]; then
-              echo "Waiting 30 seconds before retry..."
-              sleep 30
-            fi
-          done
-
-          echo "::error::Scanner failed after 3 attempts."
-          cat "$RUNNER_TEMP/run.log"
-          exit 1
+          # تشتيت صغير ثم منع التكرار: لا نطلق دورة إن وُجدت دورة أخرى بدأت قبل أقل من 10 دقائق.
+          sleep $((RANDOM % 25))
+          since=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
+                -f created=">=$since" -f per_page=50 \
+                --jq "[.workflow_runs[] | select(.id != $RUN_ID)] | length" || echo 0)
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "another run already started; not dispatching"
+            exit 0
+          fi
+          gh workflow run scanner.yml --repo "$REPO" --ref "${{ github.ref_name }}"
