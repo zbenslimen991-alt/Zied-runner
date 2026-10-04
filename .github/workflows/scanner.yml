@@ -1,12 +1,19 @@
 name: Scanner (Hourly)
 
 on:
+  # التشغيل التلقائي كل ساعة
+  # 13 دقيقة بعد بداية الساعة لتقليل ضغط GitHub
   schedule:
-    # تشغيل مرة كل ساعة، عند الدقيقة 7 لتجنب ضغط بداية الساعة
-    - cron: '7 * * * *'
+    - cron: '13 * * * *'
 
-  # تشغيل يدوي من Actions
+  # التشغيل اليدوي من Actions
   workflow_dispatch: {}
+
+  # اختبار أن الـ workflow يعمل عند وصول Commit إلى main
+  # هذا مؤقت للتشخيص، ويمكن حذفه لاحقًا.
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -25,6 +32,28 @@ jobs:
     timeout-minutes: 40
 
     steps:
+      - name: Show trigger information
+        run: |
+          echo "=========================================="
+          echo "Workflow trigger information"
+          echo "=========================================="
+          echo "Event: ${{ github.event_name }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "=========================================="
+
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "SCHEDULED RUN DETECTED"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "PUSH RUN DETECTED"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "MANUAL RUN DETECTED"
+          else
+            echo "UNKNOWN TRIGGER DETECTED"
+          fi
+
       - name: Checkout private app repository
         uses: actions/checkout@v4
         with:
