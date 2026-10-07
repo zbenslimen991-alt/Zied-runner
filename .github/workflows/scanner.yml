@@ -1,8 +1,8 @@
-name: Scanner (Hourly)
+name: Scanner (Every 30 Minutes)
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '17,47 * * * *'
   workflow_dispatch: {}
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
         run: |
           go=true
           if [ "$EVENT" = "schedule" ]; then
-            since=$(date -u -d '45 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+            since=$(date -u -d '25 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
             n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
                   -f created=">=$since" -f per_page=50 \
                   --jq "[.workflow_runs[] | select(.id != $RUN_ID)] | length" || echo 0)
@@ -98,43 +98,3 @@ jobs:
           path: ${{ runner.temp }}/run.log
           if-no-files-found: ignore
           retention-days: 7
-
-  chain:
-    needs: [gate, run-scanner]
-    if: ${{ always() && needs.gate.outputs.go == 'true' && needs.run-scanner.result != 'cancelled' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 65
-    steps:
-      - name: Wait until next HH:07 (UTC) then dispatch next run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          now=$(date -u +%s)
-          target=$(date -u -d "$(date -u +%Y-%m-%dT%H):07:00" +%s)
-          if [ "$target" -le $((now + 120)) ]; then target=$((target + 3600)); fi
-          wait=$((target - now))
-          echo "sleeping ${wait}s until $(date -u -d @$target +%H:%M) UTC"
-          sleep "$wait"
-
-          sleep $((RANDOM % 25))
-          since=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
-                -f created=">=$since" -f per_page=50 \
-                --jq "[.workflow_runs[] | select(.id != $RUN_ID)] | length" || echo 0)
-          if [ "${n:-0}" -gt 0 ]; then
-            echo "another run already started; not dispatching"
-            exit 0
-          fi
-
-          for attempt in 1 2 3 4 5; do
-            echo "Dispatch attempt $attempt/5"
-            if gh workflow run scanner.yml --repo "$REPO" --ref main; then
-              echo "Next run dispatched successfully."
-              exit 0
-            fi
-            if [ "$attempt" -lt 5 ]; then sleep 20; fi
-          done
-          echo "::error::Unable to dispatch next scanner run after 5 attempts"
-          exit 1
