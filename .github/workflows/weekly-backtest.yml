@@ -1,4 +1,4 @@
-name: Weekly Backtest
+name: Weekly Backtest + Learning
 
 on:
   schedule:
@@ -10,7 +10,7 @@ permissions:
   actions: write
 
 jobs:
-  weekly-backtest:
+  weekly-backtest-learning:
     runs-on: ubuntu-latest
     timeout-minutes: 330
     concurrency:
@@ -53,11 +53,22 @@ jobs:
           set -o pipefail
           python okx_quant/weekly_backtest.py 2>&1 | tee "$RUNNER_TEMP/weekly-backtest.log"
 
+      - name: Learn from closed paper trades
+        working-directory: app
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          set -o pipefail
+          python okx_quant/weekly_learning.py 2>&1 | tee "$RUNNER_TEMP/weekly-learning.log"
+
       - name: Upload weekly Backtest log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: weekly-backtest-log-${{ github.run_id }}
-          path: ${{ runner.temp }}/weekly-backtest.log
+          path: |
+            ${{ runner.temp }}/weekly-backtest.log
+            ${{ runner.temp }}/weekly-learning.log
           if-no-files-found: ignore
           retention-days: 14
