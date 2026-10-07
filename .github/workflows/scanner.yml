@@ -88,7 +88,40 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           set -o pipefail
-          python okx_quant/okx_quant_scanner.py 2>&1 | tee "$RUNNER_TEMP/run.log"
+          timeout --signal=TERM --kill-after=60s 40m \
+            python okx_quant/okx_quant_scanner.py 2>&1 | tee "$RUNNER_TEMP/run.log"
+
+      - name: Notify scanner failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+            python - <<'PY'
+import os
+import urllib.parse
+import urllib.request
+
+token = os.environ["TG_TOKEN"]
+chat_id = os.environ["TG_CHAT_ID"]
+message = (
+    "🚨 <b>Zied Scanner — فشل تشغيل الدورة</b>\n"
+    "الـScanner لم يكتمل بنجاح.\n"
+    "راجع سجل GitHub Actions للتفاصيل."
+)
+url = f"https://api.telegram.org/bot{token}/sendMessage"
+data = urllib.parse.urlencode({
+    "chat_id": chat_id,
+    "text": message,
+    "parse_mode": "HTML",
+}).encode()
+try:
+    urllib.request.urlopen(url, data=data, timeout=10).read()
+except Exception as exc:
+    print(f"Telegram failure notification failed: {exc}")
+PY
+          fi
 
       - name: Upload scanner log
         if: always()
