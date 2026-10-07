@@ -83,7 +83,6 @@ jobs:
 
       - name: Run scanner
         working-directory: app
-        timeout-minutes: 40
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
