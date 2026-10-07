@@ -1,10 +1,5 @@
 name: Scanner (Hourly)
 
-# التشغيل الساعي ذاتي الاستمرار: بعد انتهاء كل دورة تنتظر مهمة "chain" حتى
-# الدقيقة 07 من الساعة التالية ثم تطلق الدورة التالية بنفسها (workflow_dispatch).
-# جدولة schedule بقيت كاحتياط فقط، وتُتجاهل إن كانت هناك دورة بدأت قبل أقل من 45 دقيقة.
-# لإيقاف السلسلة: ألغِ (Cancel) الدورة الجارية أو مهمة chain من تبويب Actions.
-
 on:
   schedule:
     - cron: '17 * * * *'
@@ -56,7 +51,7 @@ jobs:
           repository: ${{ secrets.APP_REPO }}
           token: ${{ secrets.APP_REPO_TOKEN }}
           path: app
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -74,8 +69,17 @@ jobs:
       - name: Run tests
         working-directory: app
         run: |
-          python -m pytest -q > "$RUNNER_TEMP/tests.log" 2>&1 \
-            || { echo "::error::Tests failed"; exit 1; }
+          set -o pipefail
+          python -m pytest -q 2>&1 | tee "$RUNNER_TEMP/tests.log"
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log-${{ github.run_id }}
+          path: ${{ runner.temp }}/tests.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run scanner
         working-directory: app
@@ -83,12 +87,20 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          python okx_quant/okx_quant_scanner.py > "$RUNNER_TEMP/run.log" 2>&1 \
-            || { echo "::error::Scanner failed (details sent to Telegram)"; exit 1; }
+          set -o pipefail
+          python okx_quant/okx_quant_scanner.py 2>&1 | tee "$RUNNER_TEMP/run.log"
+
+      - name: Upload scanner log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-log-${{ github.run_id }}
+          path: ${{ runner.temp }}/run.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   chain:
     needs: [gate, run-scanner]
-    # تستمر السلسلة حتى لو فشلت الدورة، وتتوقف فقط عند الإلغاء اليدوي.
     if: ${{ always() && needs.gate.outputs.go == 'true' && needs.run-scanner.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 65
@@ -106,7 +118,6 @@ jobs:
           echo "sleeping ${wait}s until $(date -u -d @$target +%H:%M) UTC"
           sleep "$wait"
 
-          # تشتيت صغير ثم منع التكرار: لا نطلق دورة إن وُجدت دورة أخرى بدأت قبل أقل من 10 دقائق.
           sleep $((RANDOM % 25))
           since=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
           n=$(gh api --method GET "repos/$REPO/actions/workflows/scanner.yml/runs" \
@@ -116,4 +127,14 @@ jobs:
             echo "another run already started; not dispatching"
             exit 0
           fi
-          gh workflow run scanner.yml --repo "$REPO" --ref "${{ github.ref_name }}"
+
+          for attempt in 1 2 3 4 5; do
+            echo "Dispatch attempt $attempt/5"
+            if gh workflow run scanner.yml --repo "$REPO" --ref main; then
+              echo "Next run dispatched successfully."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then sleep 20; fi
+          done
+          echo "::error::Unable to dispatch next scanner run after 5 attempts"
+          exit 1
