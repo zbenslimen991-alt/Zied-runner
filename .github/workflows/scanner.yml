@@ -42,6 +42,37 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
 
+      - name: Sync latest validated backtest state
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.APP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          BACKTEST_REPO="zbenslimen991-alt/Zied-backtest"
+          RUN_ID="$(gh run list --repo "$BACKTEST_REPO" --workflow backtest.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful weekly backtest run found; refusing to run with unknown state."
+            exit 1
+          fi
+          rm -rf .backtest-state-sync
+          mkdir -p .backtest-state-sync
+          gh run download "$RUN_ID" --repo "$BACKTEST_REPO" --name quant-state --dir .backtest-state-sync
+          STATE_DIR=".backtest-state-sync/quant-state"
+          if [ ! -d "$STATE_DIR" ]; then
+            STATE_DIR=".backtest-state-sync"
+          fi
+          for f in backtest_results.json ml_model_memory.json analysis_memory.json strategy_stats.json; do
+            if [ -f "$STATE_DIR/$f" ]; then
+              cp "$STATE_DIR/$f" "$f"
+              echo "Synced $f"
+            else
+              echo "Missing state file: $f"
+            fi
+          done
+          rm -rf .backtest-state-sync
+          test -s backtest_results.json
+          echo "Backtest state synchronization: OK (run $RUN_ID)"
+
       - name: Run tests
         working-directory: app
         run: |
