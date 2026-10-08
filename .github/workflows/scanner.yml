@@ -51,22 +51,24 @@ jobs:
           BACKTEST_REPO="zbenslimen991-alt/Zied-backtest"
           RUN_ID="$(gh run list --repo "$BACKTEST_REPO" --workflow backtest.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful weekly backtest run found; refusing to run with unknown state."
-            exit 1
+            echo "No successful weekly backtest run found; continuing with existing state."
+            exit 0
+          fi
+          ARTIFACT_EXISTS="$(gh api "repos/$BACKTEST_REPO/actions/runs/$RUN_ID/artifacts" --jq '[.artifacts[] | select(.name=="quant-state")] | length' || true)"
+          if [ "$ARTIFACT_EXISTS" != "1" ]; then
+            echo "quant-state artifact is not published yet; continuing with existing state."
+            echo "Backtest workflow still needs a Publish quant state step."
+            exit 0
           fi
           rm -rf .backtest-state-sync
           mkdir -p .backtest-state-sync
           gh run download "$RUN_ID" --repo "$BACKTEST_REPO" --name quant-state --dir .backtest-state-sync
           STATE_DIR=".backtest-state-sync/quant-state"
-          if [ ! -d "$STATE_DIR" ]; then
-            STATE_DIR=".backtest-state-sync"
-          fi
+          [ -d "$STATE_DIR" ] || STATE_DIR=".backtest-state-sync"
           for f in backtest_results.json ml_model_memory.json analysis_memory.json strategy_stats.json; do
             if [ -f "$STATE_DIR/$f" ]; then
               cp "$STATE_DIR/$f" "$f"
               echo "Synced $f"
-            else
-              echo "Missing state file: $f"
             fi
           done
           rm -rf .backtest-state-sync
