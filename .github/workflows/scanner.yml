@@ -2,7 +2,7 @@ name: Scanner (Every 30 Minutes)
 
 on:
   schedule:
-    - cron: '17,47 * * * *'
+    - cron: '7,37 * * * *'
   workflow_dispatch: {}
 
 permissions:
