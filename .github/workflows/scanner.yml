@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.APP_REPO }}
+          ref: main
           token: ${{ secrets.APP_REPO_TOKEN }}
           path: app
           fetch-depth: 1
