@@ -14,8 +14,6 @@ permissions:
 
 jobs:
   run-scanner:
-    needs: gate
-    if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     concurrency:
