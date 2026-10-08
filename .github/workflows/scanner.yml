@@ -101,6 +101,21 @@ jobs:
           metrics = scan_log_text(p.read_text(errors="ignore") if p.exists() else "")
           print(format_report(metrics))
           PY
+      - name: Reliability gate
+        if: always()
+        working-directory: app
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from okx_quant.reliability import scan_log_text, has_fatal_runtime_error
+          p = Path("${{ runner.temp }}/run.log")
+          metrics = scan_log_text(p.read_text(errors="ignore") if p.exists() else "")
+          if has_fatal_runtime_error(metrics):
+              print("Reliability gate: fatal runtime errors detected.")
+              raise SystemExit(1)
+          print("Reliability gate: OK")
+          PY
+
       - name: Upload scanner log
         if: always()
         uses: actions/upload-artifact@v4
