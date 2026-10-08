@@ -36,44 +36,41 @@ jobs:
           cache: 'pip'
           cache-dependency-path: app/requirements.txt
 
+      - name: Validate latest quant state
+        working-directory: app
+        run: |
+          set -euo pipefail
+
+          latest_state_file() {
+            local pattern="$1"
+            find . -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' 2>/dev/null               | sort -nr               | head -n 1               | cut -d' ' -f2-
+          }
+
+          validate_state() {
+            local label="$1"
+            local pattern="$2"
+            local file
+            file="$(latest_state_file "$pattern")"
+            if [ -z "$file" ] || [ ! -s "$file" ]; then
+              echo "ERROR: $label state is missing or empty (pattern $pattern)"
+              exit 1
+            fi
+            echo "Validated $label: $file ($(wc -c < "$file") bytes)"
+          }
+
+          validate_state "Backtest" "backtest_results_*.json"
+          validate_state "ML model" "ml_model_memory_*.json"
+          validate_state "Analysis memory" "analysis_memory_*.json"
+          validate_state "Strategy stats" "strategy_stats_*.json"
+
+          echo "Quant state validation: OK"
+          echo "The scanner loads these rotated files through state.py/storage_rotation.py."
+
       - name: Install dependencies
         working-directory: app
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
-
-      - name: Sync latest validated backtest state
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ secrets.APP_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          BACKTEST_REPO="zbenslimen991-alt/Zied-backtest"
-          RUN_ID="$(gh run list --repo "$BACKTEST_REPO" --workflow backtest.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "No successful weekly backtest run found; continuing with existing state."
-            exit 0
-          fi
-          ARTIFACT_EXISTS="$(gh api "repos/$BACKTEST_REPO/actions/runs/$RUN_ID/artifacts" --jq '[.artifacts[] | select(.name=="quant-state")] | length' || true)"
-          if [ "$ARTIFACT_EXISTS" != "1" ]; then
-            echo "quant-state artifact is not published yet; continuing with existing state."
-            echo "Backtest workflow still needs a Publish quant state step."
-            exit 0
-          fi
-          rm -rf .backtest-state-sync
-          mkdir -p .backtest-state-sync
-          gh run download "$RUN_ID" --repo "$BACKTEST_REPO" --name quant-state --dir .backtest-state-sync
-          STATE_DIR=".backtest-state-sync/quant-state"
-          [ -d "$STATE_DIR" ] || STATE_DIR=".backtest-state-sync"
-          for f in backtest_results.json ml_model_memory.json analysis_memory.json strategy_stats.json; do
-            if [ -f "$STATE_DIR/$f" ]; then
-              cp "$STATE_DIR/$f" "$f"
-              echo "Synced $f"
-            fi
-          done
-          rm -rf .backtest-state-sync
-          test -s backtest_results.json
-          echo "Backtest state synchronization: OK (run $RUN_ID)"
 
       - name: Run tests
         working-directory: app
@@ -110,6 +107,7 @@ jobs:
           metrics = scan_log_text(p.read_text(errors="ignore") if p.exists() else "")
           print(format_report(metrics))
           PY
+
       - name: Reliability gate
         if: always()
         working-directory: app
