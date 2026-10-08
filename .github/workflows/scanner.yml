@@ -1,3 +1,4 @@
+# V41b validation trigger: limited backtest evidence tier
 # V41 integration test trigger: AI V2 soft-pass + quant-state validation
 name: Scanner (Every 30 Minutes)
 
