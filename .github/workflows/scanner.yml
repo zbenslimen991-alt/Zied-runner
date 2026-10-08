@@ -90,6 +90,17 @@ jobs:
           set -o pipefail
           python okx_quant/okx_quant_scanner.py 2>&1 | tee "$RUNNER_TEMP/run.log"
 
+      - name: Reliability report
+        if: always()
+        working-directory: app
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from reliability import scan_log_text, format_report
+          p = Path("${{ runner.temp }}/run.log")
+          metrics = scan_log_text(p.read_text(errors="ignore") if p.exists() else "")
+          print(format_report(metrics))
+          PY
       - name: Upload scanner log
         if: always()
         uses: actions/upload-artifact@v4
