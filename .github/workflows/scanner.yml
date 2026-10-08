@@ -96,7 +96,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          from reliability import scan_log_text, format_report
+          from okx_quant.reliability import scan_log_text, format_report
           p = Path("${{ runner.temp }}/run.log")
           metrics = scan_log_text(p.read_text(errors="ignore") if p.exists() else "")
           print(format_report(metrics))
