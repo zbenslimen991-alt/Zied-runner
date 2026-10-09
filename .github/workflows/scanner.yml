@@ -1,3 +1,4 @@
+# V61 validation trigger: run tests for operations guard and paper/backtest reconciliation
 # V56 adaptive exploration validation: run latest Paper-Trading learning path
 # V53 diagnostic trigger: distinguish native AI V2 pass from soft fallback eligibility
       # V54 validation: evidence consensus + conservative risk fallback
