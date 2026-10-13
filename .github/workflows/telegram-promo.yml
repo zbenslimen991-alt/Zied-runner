@@ -1,0 +1,46 @@
+name: Telegram promo (2x daily)
+
+on:
+  schedule:
+    # Tunisia time: approximately 09:00 and 18:00 (UTC+1)
+    - cron: '0 8,17 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  publish-promo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish promotional message to public channel only
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${TG_TOKEN:-}" ]; then
+            echo "Missing TG_TOKEN secret"
+            exit 1
+          fi
+          if [ -z "${TG_CHANNEL_ID:-}" ]; then
+            echo "Missing TG_CHANNEL_ID secret"
+            exit 1
+          fi
+
+          MESSAGE=$(cat <<'EOF'
+🚀 Découvrez Zied Quant Traide !
+
+📊 Un outil d’analyse du marché crypto avec des stratégies automatisées, des signaux et des niveaux Entry / TP / SL.
+
+🧪 Les signaux sont expérimentaux et destinés à l’analyse et au paper trading. Aucun rendement n’est garanti.
+
+💬 Contact : @ziedbns2
+
+⚠️ Ceci n’est pas un conseil financier. Faites toujours vos propres recherches.
+EOF
+)
+          RESPONSE=$(curl --fail-with-body --silent --show-error             --request POST             "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"             --data-urlencode "chat_id=${TG_CHANNEL_ID}"             --data-urlencode "text=${MESSAGE}")
+          echo "$RESPONSE" | python -c 'import json,sys; d=json.load(sys.stdin); print("Telegram response:", d.get("description", "ok")); sys.exit(0 if d.get("ok") else 1)'
