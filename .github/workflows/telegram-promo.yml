@@ -32,15 +32,13 @@ jobs:
           fi
 
           MESSAGE=$(printf '%s\n' \
-            '🚀 Découvrez Zied Quant Traide !' \
+            '🚀 مرحبًا بكم في Zied Quant Traide' \
             '' \
-            '📊 Un outil d’analyse du marché crypto avec des stratégies automatisées, des signaux et des niveaux Entry / TP / SL.' \
+            '🤖 اكتشفوا نتائج التحليل بالذكاء الاصطناعي (AI) لسوق العملات الرقمية.' \
             '' \
-            '🧪 Les signaux et analyses sont fournis à titre informatif. Aucun rendement n’est garanti.' \
+            '💳 إمكانية الدخول إلى الموقع باشتراك شهري قدره 30 دولارًا.' \
             '' \
-            '💬 Contact : @ziedbns2' \
-            '' \
-            '⚠️ Ceci n’est pas un conseil financier. Faites toujours vos propres recherches.')
+            '📩 للتواصل والاشتراك: @ziedbns2')
 
           RESPONSE=$(curl --fail-with-body --silent --show-error \
             --request POST \
