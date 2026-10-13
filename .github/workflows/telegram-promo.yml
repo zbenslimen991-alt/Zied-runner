@@ -2,9 +2,9 @@ name: Telegram promo (2x daily)
 
 on:
   schedule:
-    # Tunisia time: approximately 09:00 and 18:00 (UTC+1)
+    # GitHub Actions uses UTC: 08:00 and 17:00 UTC = 09:00 and 18:00 Tunisia time
     - cron: '0 8,17 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,12 +15,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Publish promotional message to public channel only
+        shell: bash
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
-        shell: bash
         run: |
           set -euo pipefail
+
           if [ -z "${TG_TOKEN:-}" ]; then
             echo "Missing TG_TOKEN secret"
             exit 1
@@ -30,17 +31,21 @@ jobs:
             exit 1
           fi
 
-          MESSAGE=$(cat <<'EOF'
-🚀 Découvrez Zied Quant Traide !
+          MESSAGE=$(printf '%s\n' \
+            '🚀 Découvrez Zied Quant Traide !' \
+            '' \
+            '📊 Un outil d’analyse du marché crypto avec des stratégies automatisées, des signaux et des niveaux Entry / TP / SL.' \
+            '' \
+            '🧪 Les signaux et analyses sont fournis à titre informatif. Aucun rendement n’est garanti.' \
+            '' \
+            '💬 Contact : @ziedbns2' \
+            '' \
+            '⚠️ Ceci n’est pas un conseil financier. Faites toujours vos propres recherches.')
 
-📊 Un outil d’analyse du marché crypto avec des stratégies automatisées, des signaux et des niveaux Entry / TP / SL.
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHANNEL_ID}" \
+            --data-urlencode "text=${MESSAGE}")
 
-🧪 Les signaux et analyses sont fournis à titre informatif. Aucun rendement n’est garanti.
-
-💬 Contact : @ziedbns2
-
-⚠️ Ceci n’est pas un conseil financier. Faites toujours vos propres recherches.
-EOF
-)
-          RESPONSE=$(curl --fail-with-body --silent --show-error             --request POST             "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"             --data-urlencode "chat_id=${TG_CHANNEL_ID}"             --data-urlencode "text=${MESSAGE}")
           echo "$RESPONSE" | python -c 'import json,sys; d=json.load(sys.stdin); print("Telegram response:", d.get("description", "ok")); sys.exit(0 if d.get("ok") else 1)'
