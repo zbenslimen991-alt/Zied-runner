@@ -53,6 +53,57 @@ jobs:
             echo "Found $pattern at $file"
           done
 
+      - name: Refresh primary H1 candle history
+        working-directory: app
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import sys
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+
+          sys.path.insert(0, "okx_quant")
+          from api import get_pairs
+          from candle_store import update_historical_candles
+
+          pairs = get_pairs()
+          if not pairs:
+              raise SystemExit("ERROR: OKX returned no eligible live Spot/USDT pairs; refusing to mark candle refresh successful.")
+
+          print(f"[Daily H1 Refresh] eligible_pairs={len(pairs)}")
+          failures = []
+          refreshed = 0
+
+          def refresh(pair):
+              inst_id = pair.get("instId")
+              if not inst_id:
+                  raise ValueError("instrument has no instId")
+              df, added, last_ts = update_historical_candles(inst_id)
+              if df is None or df.empty or last_ts is None:
+                  raise RuntimeError(f"no usable H1 candles persisted for {inst_id}")
+              return inst_id, len(df), added, last_ts
+
+          # Bounded concurrency reduces run time while keeping API pressure limited.
+          with ThreadPoolExecutor(max_workers=3) as pool:
+              futures = {pool.submit(refresh, pair): pair for pair in pairs}
+              for future in as_completed(futures):
+                  pair = futures[future]
+                  try:
+                      inst_id, count, added, last_ts = future.result()
+                      refreshed += 1
+                      print(f"[Daily H1 Refresh] {inst_id}: candles={count} added={added} last_ts={last_ts}")
+                  except Exception as exc:
+                      inst_id = pair.get("instId", "UNKNOWN")
+                      failures.append({"instId": inst_id, "error": str(exc)[:200]})
+                      print(f"[Daily H1 Refresh] ERROR {inst_id}: {exc}")
+
+          print(f"[Daily H1 Refresh Summary] refreshed={refreshed}/{len(pairs)} failed={len(failures)}")
+          if failures:
+              print(f"[Daily H1 Refresh Failures] {failures[:20]}")
+              raise SystemExit(f"{len(failures)} H1 pair refresh(es) failed; audit must not be treated as fully fresh.")
+          PY
+
       - name: Run daily learning
         working-directory: app
         run: |
@@ -65,18 +116,23 @@ jobs:
           set -o pipefail
           python okx_quant/learning_audit.py 2>&1 | tee "${RUNNER_TEMP}/learning-audit.log"
 
-      - name: Persist audit history in private app repository
+      - name: Persist refreshed H1 candles and audit history in private app repository
         working-directory: app
         run: |
           set -euo pipefail
           git add learning_audit_report.json learning_audit_history.json
+          # Persist only the canonical H1 directory; legacy files and other
+          # timeframes are retained unchanged for backward compatibility.
+          if [ -d candle_history/1H ]; then
+            git add -f candle_history/1H/
+          fi
           if git diff --cached --quiet; then
-            echo "No audit report changes to persist."
+            echo "No candle or audit report changes to persist."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update daily strategy learning audit [skip ci]"
+          git commit -m "Refresh daily H1 candle history and learning audit [skip ci]"
           git pull --rebase origin "$(git branch --show-current)"
           git push origin "HEAD:$(git branch --show-current)"
 
