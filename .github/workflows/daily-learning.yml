@@ -59,11 +59,35 @@ jobs:
           set -o pipefail
           python okx_quant/weekly_learning.py 2>&1 | tee "${RUNNER_TEMP}/daily-learning.log"
 
-      - name: Upload daily learning log
+      - name: Run strategy and candle freshness audit
+        working-directory: app
+        run: |
+          set -o pipefail
+          python okx_quant/learning_audit.py 2>&1 | tee "${RUNNER_TEMP}/learning-audit.log"
+
+      - name: Persist audit history in private app repository
+        working-directory: app
+        run: |
+          set -euo pipefail
+          git add learning_audit_report.json learning_audit_history.json
+          if git diff --cached --quiet; then
+            echo "No audit report changes to persist."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update daily strategy learning audit [skip ci]"
+          git pull --rebase origin "$(git branch --show-current)"
+          git push origin "HEAD:$(git branch --show-current)"
+
+      - name: Upload daily learning and audit reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daily-learning-log-${{ github.run_id }}
-          path: ${{ runner.temp }}/daily-learning.log
-          if-no-files-found: ignore
+          name: daily-learning-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/daily-learning.log
+            ${{ runner.temp }}/learning-audit.log
+            app/learning_audit_report.json
+          if-no-files-found: warn
           retention-days: 14
