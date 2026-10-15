@@ -1,9 +1,9 @@
-name: Telegram promo (2x daily)
+name: Telegram promo (every 4 hours)
 
 on:
   schedule:
-    # GitHub Actions uses UTC: 08:00 and 17:00 UTC = 09:00 and 18:00 Tunisia time
-    - cron: '0 8,17 * * *'
+    # Every 4 hours (UTC); Tunisia local time is UTC+1.
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 permissions:
