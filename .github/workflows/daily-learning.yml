@@ -106,6 +106,8 @@ jobs:
 
       - name: Run daily learning
         working-directory: app
+        env:
+          ZIED_TRAIN_HISTORICAL_AI: "0"
         run: |
           set -o pipefail
           python okx_quant/weekly_learning.py 2>&1 | tee "${RUNNER_TEMP}/daily-learning.log"
