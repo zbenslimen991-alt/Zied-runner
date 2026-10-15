@@ -44,6 +44,44 @@ jobs:
           cache: 'pip'
           cache-dependency-path: app/requirements.txt
 
+      - name: Diagnose active news source version
+        working-directory: app
+        run: |
+          set -euo pipefail
+          echo "=== Active application checkout ==="
+          git remote -v || true
+          git rev-parse HEAD
+          echo "=== News source count in the code actually being executed ==="
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          path = Path("okx_quant/news_intelligence.py")
+          if not path.exists():
+              raise SystemExit(f"ERROR: {path} is missing from APP_REPO checkout")
+          source = path.read_text(encoding="utf-8")
+          tree = ast.parse(source, filename=str(path))
+          feeds = next(
+              (node.value for node in tree.body
+               if isinstance(node, ast.Assign)
+               and any(isinstance(target, ast.Name) and target.id == "FEEDS" for target in node.targets)),
+              None,
+          )
+          if not isinstance(feeds, (ast.Tuple, ast.List)):
+              raise SystemExit("ERROR: FEEDS list was not found in the checked-out source")
+          names = [
+              item.elts[0].value for item in feeds.elts
+              if isinstance(item, ast.Tuple) and len(item.elts) >= 2
+              and isinstance(item.elts[0], ast.Constant)
+          ]
+          print(f"NEWS_FEED_COUNT={len(names)}")
+          print("NEWS_FEED_NAMES=" + ", ".join(names))
+          if len(names) < 30:
+              raise SystemExit(
+                  f"ERROR: active APP_REPO checkout has only {len(names)} news sources; "
+                  "expected at least 30. The scanner is checking out a stale/different code version."
+              )
+          PY
+
       - name: Validate latest quant state
         working-directory: app
         run: |
