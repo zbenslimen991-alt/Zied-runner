@@ -5,11 +5,11 @@
       # V54 validation: evidence consensus + conservative risk fallback
 # V41b validation trigger: limited backtest evidence tier
 # V41 integration test trigger: AI V2 soft-pass + quant-state validation
-name: Scanner (Every 30 Minutes)
+name: Scanner (Continuous 24/7)
 
+# Start manually or when this workflow changes. Each run performs cycles continuously,
+# then queues the next workflow run before the hosted runner's time limit.
 on:
-  schedule:
-    - cron: '11,41 * * * *'
   workflow_dispatch: {}
   push:
     paths:
@@ -22,7 +22,7 @@ permissions:
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 350
     concurrency:
       group: okx-quant-portfolio-state
       cancel-in-progress: false
@@ -133,18 +133,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Run scanner
+      - name: Run scanner continuously
+        id: scanner_loop
         working-directory: app
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
-          # Increase analysis concurrency modestly while preserving the
-          # global OKX request throttle and scanning all eligible USDT pairs.
           ZIED_ANALYSIS_WORKERS: '12'
         run: |
-          set -o pipefail
-          python okx_quant/okx_quant_scanner.py 2>&1 | tee "$RUNNER_TEMP/run.log"
+          set -uo pipefail
+          : > "$RUNNER_TEMP/run.log"
+          cycle=0
+          # End this runner after 320 minutes so reports and the handoff can finish
+          # before the 350-minute job timeout.
+          deadline=$((SECONDS + 320 * 60))
+          while (( SECONDS < deadline )); do
+            cycle=$((cycle + 1))
+            echo "===== ANALYSIS CYCLE $cycle START $(date -u +'%Y-%m-%dT%H:%M:%SZ') =====" | tee -a "$RUNNER_TEMP/run.log"
+            if python okx_quant/okx_quant_scanner.py 2>&1 | tee -a "$RUNNER_TEMP/run.log"; then
+              echo "CYCLE $cycle RESULT=SUCCESS" | tee -a "$RUNNER_TEMP/run.log"
+            else
+              rc=$?
+              echo "CYCLE $cycle RESULT=FAILED EXIT_CODE=$rc; continuing" | tee -a "$RUNNER_TEMP/run.log"
+            fi
+            echo "===== ANALYSIS CYCLE $cycle END $(date -u +'%Y-%m-%dT%H:%M:%SZ') =====" | tee -a "$RUNNER_TEMP/run.log"
+            # No sleep: begin the next cycle immediately.
+          done
+          echo "Completed $cycle cycles; handing off to the next workflow run." | tee -a "$RUNNER_TEMP/run.log"
 
       - name: Reliability report
         if: always()
@@ -183,3 +199,11 @@ jobs:
           path: ${{ runner.temp }}/run.log
           if-no-files-found: ignore
           retention-days: 7
+      - name: Dispatch next continuous run
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run scanner.yml --repo zbenslimen991-alt/Zied-runner --ref main
+          echo "Queued the next continuous scanner run."
