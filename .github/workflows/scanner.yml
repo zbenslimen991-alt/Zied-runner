@@ -139,6 +139,9 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+          # Increase analysis concurrency modestly while preserving the
+          # global OKX request throttle and scanning all eligible USDT pairs.
+          ZIED_ANALYSIS_WORKERS: '12'
         run: |
           set -o pipefail
           python okx_quant/okx_quant_scanner.py 2>&1 | tee "$RUNNER_TEMP/run.log"
