@@ -96,8 +96,12 @@ jobs:
             local pattern="$2"
             local file
             file="$(latest_state_file "$pattern")"
-            if [ -z "$file" ] || [ ! -s "$file" ]; then
-              echo "ERROR: $label state is missing or empty (pattern $pattern)"
+            if [ -z "$file" ]; then
+              echo "Fresh-state reset: $label file not present yet; scanner may initialize it (pattern $pattern)"
+              return 0
+            fi
+            if [ ! -s "$file" ]; then
+              echo "ERROR: $label state exists but is empty (pattern $pattern)"
               exit 1
             fi
             echo "Validated $label: $file ($(wc -c < "$file") bytes)"
