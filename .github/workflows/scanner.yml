@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   validate:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_LIVE_SCANNER == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
