@@ -74,7 +74,7 @@ jobs:
 
   scanner:
     needs: validate
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_scanner == true) || (github.event_name == 'schedule' && secrets.ENABLE_LIVE_SCANNER == 'true') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_scanner == true) || (github.event_name == 'schedule' && vars.ENABLE_LIVE_SCANNER == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
