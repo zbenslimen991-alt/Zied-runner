@@ -113,7 +113,7 @@ jobs:
           validate_state "Backtest" "backtest_results_*.json"
           validate_state "ML model" "ml_model_memory_*.json"
           validate_state "Analysis memory" "analysis_memory_*.json"
-          validate_state "Strategy stats" "strategy_stats_*.json"
+          # Legacy strategy statistics are no longer required by live scanning.
 
           echo "Quant state validation: OK"
           echo "The scanner loads these rotated files through state.py/storage_rotation.py."
