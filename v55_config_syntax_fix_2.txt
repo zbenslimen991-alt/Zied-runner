@@ -1,1 +1,0 @@
-V55 validation trigger after fixing config.py missing quote. Paper Trading only.
