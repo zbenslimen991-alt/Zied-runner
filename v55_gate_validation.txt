@@ -1,1 +1,0 @@
-V55 gate validation trigger. Paper Trading only; no live execution.
