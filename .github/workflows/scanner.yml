@@ -1,0 +1,114 @@
+name: Zied Runtime (AI2 migration-safe)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_scanner:
+        description: "Run one scanner cycle (may place live OKX orders if app configuration enables them)"
+        required: true
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zied-runtime-cycle
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Zied application
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.APP_REPO }}
+          ref: main
+          token: ${{ secrets.APP_REPO_TOKEN }}
+          path: app
+          fetch-depth: 1
+
+      - name: Verify required runtime files
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f requirements.txt || { echo "Missing requirements.txt"; exit 1; }
+          test -f okx_quant/okx_quant_scanner.py || { echo "Missing scanner entrypoint"; exit 1; }
+          test -d okx_quant || { echo "Missing okx_quant package"; exit 1; }
+          echo "APP_COMMIT=$(git rev-parse HEAD)"
+          echo "Runtime entrypoint and dependency file are present."
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies
+        working-directory: app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Compile Python sources
+        working-directory: app
+        run: python -m compileall -q okx_quant
+
+      - name: Run available tests
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -maxdepth 3 -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
+            python -m pytest -q
+          else
+            echo "No Python test files found; syntax/dependency validation completed."
+          fi
+
+  scanner:
+    needs: validate
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_scanner == true) || (github.event_name == 'schedule' && secrets.ENABLE_LIVE_SCANNER == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Zied application
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.APP_REPO }}
+          ref: main
+          token: ${{ secrets.APP_REPO_TOKEN }}
+          path: app
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies
+        working-directory: app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run exactly one scanner cycle
+        working-directory: app
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+          ZIED_ANALYSIS_WORKERS: "6"
+        run: |
+          set -euo pipefail
+          echo "Starting one scanner cycle at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python okx_quant/okx_quant_scanner.py
+          echo "Scanner cycle completed successfully at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
