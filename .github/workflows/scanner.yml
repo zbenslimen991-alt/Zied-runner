@@ -7,8 +7,11 @@
 # V41 integration test trigger: AI V2 soft-pass + quant-state validation
 name: Scanner (Restart After Each Run)
 
-# Run one analysis cycle per workflow. When this run finishes, dispatch the next run.
+# Run one analysis cycle every 30 minutes, with manual dispatch available.
+# The schedule is the recovery mechanism if a runner is cancelled or shut down.
 on:
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch: {}
   push:
     paths:
@@ -184,18 +187,17 @@ jobs:
           path: ${{ runner.temp }}/run.log
           if-no-files-found: ignore
           retention-days: 7
-      - name: Start next workflow after this run
+      - name: Check weekly backtest coordination
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # The weekly backtest writes to the same state repository. Pause the
-          # scanner chain while that workflow is queued/running so state commits
-          # cannot race and replace each other's portfolio/backtest cache.
+          # The weekly backtest writes to the same state repository. Report overlap
+          # so operators can identify a delayed scanner cycle; concurrency prevents
+          # simultaneous scanner jobs, while the 30-minute schedule provides recovery.
           if gh run list --repo zbenslimen991-alt/Zied-runner --workflow weekly-backtest.yml --limit 10 --json status | python -c 'import json,sys; active={"queued","in_progress","waiting","pending","requested"}; runs=json.load(sys.stdin); sys.exit(0 if any(r.get("status") in active for r in runs) else 1)'; then
-            echo "Weekly backtest is queued/running; scanner chain paused until it finishes."
-            exit 0
+            echo "Weekly backtest is queued/running; next scheduled scanner cycle will retry after the backtest."
+          else
+            echo "No active weekly backtest detected. Next scanner cycle is scheduled within 30 minutes."
           fi
-          gh workflow run scanner.yml --repo zbenslimen991-alt/Zied-runner --ref main
-          echo "Queued the next workflow run."
